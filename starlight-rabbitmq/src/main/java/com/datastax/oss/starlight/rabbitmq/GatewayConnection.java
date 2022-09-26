@@ -194,14 +194,19 @@ public class GatewayConnection extends ChannelInboundHandlerAdapter
     gatewayService.incrementBytesIn(namespace, buffer.readableBytes());
     try {
       QpidByteBuffer buf = QpidByteBuffer.wrap(buffer.nioBuffer());
+      int messageSize = buf.remaining();
       if (_netInputBuffer.remaining() < buf.remaining()) {
         QpidByteBuffer oldBuffer = _netInputBuffer;
-        _netInputBuffer = QpidByteBuffer.allocateDirect(_networkBufferSize);
         if (oldBuffer.position() != 0) {
           oldBuffer.limit(oldBuffer.position());
           oldBuffer.slice();
           oldBuffer.flip();
+          _netInputBuffer =
+              QpidByteBuffer.allocateDirect(
+                  _networkBufferSize + oldBuffer.remaining() + messageSize);
           _netInputBuffer.put(oldBuffer);
+        } else {
+          _netInputBuffer = QpidByteBuffer.allocateDirect(_networkBufferSize + messageSize);
         }
       }
       _netInputBuffer.put(buf);

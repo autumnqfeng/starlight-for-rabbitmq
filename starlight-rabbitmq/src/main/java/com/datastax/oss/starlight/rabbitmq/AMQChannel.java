@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -1135,8 +1136,49 @@ public class AMQChannel implements ServerChannelMethodProcessor {
         exchangeNameStr == null
             ? ExchangeDefaults.DEFAULT_EXCHANGE_NAME
             : exchangeNameStr.toString();
-    if (!getVHostMetadata(getContextMetadata().model()).getExchanges().containsKey(exchangeName)) {
+    ContextMetadata context = getContextMetadata().model();
+    VirtualHostMetadata vHostMetadata = getVHostMetadata(context);
+
+    if (!vHostMetadata.getExchanges().containsKey(exchangeName)) {
       closeChannel(ErrorCodes.NOT_FOUND, "Unknown exchange name: '" + exchangeName + "'");
+    }
+
+    if (getExchangeType(context, exchangeName).equals(ExchangeMetadata.Type.topic)
+        && !getExchange(context, exchangeName).getRoutingKeys().contains(routingKey.toString())) {
+      getExchange(context, exchangeName).getRoutingKeys().add(routingKey.toString());
+
+      String topic =
+          getTopicName(vHostMetadata.getNamespace(), exchangeName, routingKey.toString())
+              .toString();
+      vHostMetadata
+          .getExchanges()
+          .get(exchangeName)
+          .getBindings()
+          .forEach(
+              (queue, bindingSetMetadata) -> {
+                Map<String, BindingMetadata> subscriptions =
+                    vHostMetadata.getSubscriptions().computeIfAbsent(queue, q -> new HashMap<>());
+                bindingSetMetadata
+                    .getKeys()
+                    .forEach(
+                        bindingKey -> {
+                          if (TopicExchange.matchRoutingKey(routingKey.toString(), bindingKey)) {
+                            String subscriptionName =
+                                (topic + "-" + UUID.randomUUID()).replace("/", "_");
+                            _connection
+                                .getGatewayService()
+                                .getPulsarAdmin()
+                                .topics()
+                                .createSubscriptionAsync(topic, subscriptionName, MessageId.latest)
+                                .thenAccept(
+                                    it ->
+                                        subscriptions.put(
+                                            subscriptionName,
+                                            new BindingMetadata(
+                                                exchangeName, topic, subscriptionName)));
+                          }
+                        });
+              });
     }
 
     MessagePublishInfo info =
@@ -1871,6 +1913,10 @@ public class AMQChannel implements ServerChannelMethodProcessor {
 
   private ExchangeMetadata getExchange(ContextMetadata context, String name) {
     return getVHostMetadata(context).getExchanges().get(name);
+  }
+
+  private ExchangeMetadata.Type getExchangeType(ContextMetadata context, String name) {
+    return getVHostMetadata(context).getExchanges().get(name).getType();
   }
 
   private CompletionStage<ContextMetadata> deleteExchange(

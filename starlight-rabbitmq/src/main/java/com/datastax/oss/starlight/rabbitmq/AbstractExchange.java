@@ -97,6 +97,11 @@ public abstract class AbstractExchange {
     return TopicName.get("persistent", NamespaceName.get(vHost), topic.toString());
   }
 
+  public static String getRoutingKey(String topicName) {
+    String[] topicNames = topicName.split("\\.__");
+    return topicNames.length == 2 ? topicNames[1] : "";
+  }
+
   public static ExchangeMetadata.Type convertType(Type type) {
     switch (type) {
       case direct:
